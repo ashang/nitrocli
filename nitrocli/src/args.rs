@@ -75,7 +75,7 @@ impl From<DeviceModel> for nitrokey::Model {
 }
 
 /// A top-level command for nitrocli.
-Enum! {Command, [
+Enum! {Builtin, [
   Config => ("config", config),
   Lock => ("lock", lock),
   Otp => ("otp", otp),
@@ -220,7 +220,7 @@ fn storage(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
   parse(ctx, &parser, args)?;
   drop(parser);
 
-  subargs.insert(0, format!("nitrocli {} {}", Command::Storage, subcommand));
+  subargs.insert(0, format!("nitrocli {} {}", Builtin::Storage, subcommand));
   subcommand.execute(ctx, subargs)
 }
 
@@ -282,7 +282,7 @@ fn storage_hidden(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
     0,
     format!(
       "nitrocli {} {} {}",
-      Command::Storage,
+      Builtin::Storage,
       StorageCommand::Hidden,
       subcommand
     ),
@@ -356,7 +356,7 @@ fn config(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
   parse(ctx, &parser, args)?;
   drop(parser);
 
-  subargs.insert(0, format!("nitrocli {} {}", Command::Config, subcommand));
+  subargs.insert(0, format!("nitrocli {} {}", Builtin::Config, subcommand));
   subcommand.execute(ctx, subargs)
 }
 
@@ -467,7 +467,7 @@ fn otp(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
   parse(ctx, &parser, args)?;
   drop(parser);
 
-  subargs.insert(0, format!("nitrocli {} {}", Command::Otp, subcommand));
+  subargs.insert(0, format!("nitrocli {} {}", Builtin::Otp, subcommand));
   subcommand.execute(ctx, subargs)
 }
 
@@ -659,7 +659,7 @@ fn pin(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
   parse(ctx, &parser, args)?;
   drop(parser);
 
-  subargs.insert(0, format!("nitrocli {} {}", Command::Pin, subcommand));
+  subargs.insert(0, format!("nitrocli {} {}", Builtin::Pin, subcommand));
   subcommand.execute(ctx, subargs)
 }
 
@@ -718,7 +718,7 @@ fn pws(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
   parse(ctx, &parser, args)?;
   drop(parser);
 
-  subargs.insert(0, format!("nitrocli {} {}", Command::Pws, subcommand));
+  subargs.insert(0, format!("nitrocli {} {}", Builtin::Pws, subcommand));
   subcommand.execute(ctx, subargs)
 }
 
@@ -833,14 +833,14 @@ fn pws_status(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
 fn parse_arguments<'io, 'ctx: 'io>(
   ctx: &'ctx mut RunCtx<'_>,
   args: Vec<String>,
-) -> Result<(Command, ExecCtx<'io>, Vec<String>)> {
+) -> Result<(Builtin, ExecCtx<'io>, Vec<String>)> {
   let mut model: Option<DeviceModel> = None;
   let model_help = format!(
     "Select the device model to connect to ({})",
     fmt_enum!(DeviceModel::all_variants())
   );
   let mut verbosity = 0;
-  let mut command = Command::Status;
+  let mut command = Builtin::Status;
   let cmd_help = cmd_help!(command);
   let mut subargs = vec![];
   let mut parser = argparse::ArgumentParser::new();
