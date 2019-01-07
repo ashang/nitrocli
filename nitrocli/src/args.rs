@@ -17,8 +17,14 @@
 // * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
 // *************************************************************************
 
+use std::collections;
+use std::env;
 use std::ffi;
+use std::fmt;
+use std::fs;
 use std::io;
+use std::path;
+use std::process;
 use std::result;
 use std::str;
 
@@ -84,6 +90,55 @@ Enum! {Builtin, [
   Status => ("status", status),
   Storage => ("storage", storage)
 ]}
+
+#[derive(Debug)]
+enum Command {
+  Builtin(Builtin),
+  Extension(String),
+}
+
+impl Command {
+  pub fn execute(&self, ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
+    match self {
+      Command::Builtin(command) => command.execute(ctx, args),
+      Command::Extension(extension) => {
+        // TODO: Should not scan extensions twice.
+        let extensions = available_extensions()?;
+        match extensions.get(extension) {
+          Some(path) => process::Command::new(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(Into::<Error>::into),
+          None => Err(Error::Error(format!("Unknown command: {}", extension))),
+        }
+      }
+    }
+  }
+}
+
+impl fmt::Display for Command {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Command::Builtin(cmd) => write!(f, "{}", cmd),
+      Command::Extension(ext) => write!(f, "{}", ext),
+    }
+  }
+}
+
+impl str::FromStr for Command {
+  type Err = ();
+
+  fn from_str(s: &str) -> result::Result<Self, Self::Err> {
+    Ok(match Builtin::from_str(s) {
+      Ok(cmd) => Command::Builtin(cmd),
+      // Note that at this point we cannot know whether the extension
+      // exists or not and so we always return success. However, if we
+      // fail looking up the corresponding command an error will be
+      // emitted later on.
+      Err(()) => Command::Extension(s.to_string()),
+    })
+  }
+}
 
 Enum! {ConfigCommand, [
   Get => ("get", config_get),
@@ -828,20 +883,64 @@ fn pws_status(ctx: &mut ExecCtx<'_>, args: Vec<String>) -> Result<()> {
   commands::pws_status(ctx, all)
 }
 
+// Note: We use a BTreeMap to have a stable order. Not sure if that is
+//       required.
+fn available_extensions() -> Result<collections::BTreeMap<String, path::PathBuf>> {
+  // TODO: Not sure if hard-coding PATH here is wise. That may not be
+  //       super platform-independent and perhaps we care at some point.
+  let path = env::var_os("PATH").unwrap_or_else(ffi::OsString::new);
+  let dirs = env::split_paths(&path);
+  let mut commands = collections::BTreeMap::new();
+
+  for dir in dirs {
+    match fs::read_dir(&path::Path::new(&dir)) {
+      Ok(entries) => {
+        for entry in entries {
+          let entry = entry?;
+          let path = entry.path();
+          if path.is_file() {
+            let file = String::from(entry.file_name().to_str().unwrap());
+            // TODO: Should probably not hardcode nitrocli here.
+            // Note that we deliberately do not check whether the file
+            // we found is executable. If it is not we will just fail
+            // later on with a permission denied error.
+            if file.starts_with("nitrocli-") {
+              let mut file = file;
+              file.replace_range(.."nitrocli-".len(), "");
+              assert!(commands.insert(file, path).is_none());
+            }
+          }
+        }
+      }
+      Err(ref err) if err.kind() == io::ErrorKind::NotFound => (),
+      x => x.map(|_| ())?,
+    }
+  }
+  Ok(commands)
+}
+
 /// Parse the command-line arguments and return the selected command and
 /// the remaining arguments for the command.
 fn parse_arguments<'io, 'ctx: 'io>(
   ctx: &'ctx mut RunCtx<'_>,
   args: Vec<String>,
-) -> Result<(Builtin, ExecCtx<'io>, Vec<String>)> {
+) -> Result<(Command, ExecCtx<'io>, Vec<String>)> {
   let mut model: Option<DeviceModel> = None;
   let model_help = format!(
     "Select the device model to connect to ({})",
     fmt_enum!(DeviceModel::all_variants())
   );
   let mut verbosity = 0;
-  let mut command = Builtin::Status;
-  let cmd_help = cmd_help!(command);
+  let extensions = available_extensions()?;
+  let mut command = Command::Builtin(Builtin::Status);
+  let commands = Builtin::all_variants()
+    .iter()
+    .map(AsRef::as_ref)
+    .map(ToOwned::to_owned)
+    .chain(extensions.keys().cloned())
+    .collect::<Vec<_>>()
+    .join("|");
+  let cmd_help = format!("The command to execute ({})", commands);
   let mut subargs = vec![];
   let mut parser = argparse::ArgumentParser::new();
   parser.add_option(
