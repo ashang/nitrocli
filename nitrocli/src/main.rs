@@ -136,6 +136,11 @@ fn run<'ctx, 'io: 'ctx>(ctx: &'ctx mut RunCtx<'io>, args: Vec<String>) -> i32 {
         // argparse printed an error message
         _ => 1,
       },
+      Error::ExtensionFailed(_, rc) => {
+        // We let the extension itself deal with error reporting, we
+        // just mirror its exit code (if any).
+        rc.unwrap_or(1)
+      },
       _ => {
         let _ = eprintln!(ctx, "{}", err);
         1

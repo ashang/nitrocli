@@ -29,6 +29,7 @@ pub enum Error {
   IoError(io::Error),
   Utf8Error(str::Utf8Error),
   Error(String),
+  ExtensionFailed(String, Option<i32>),
 }
 
 impl From<&str> for Error {
@@ -74,6 +75,13 @@ impl fmt::Display for Error {
       Error::Utf8Error(_) => write!(f, "Encountered UTF-8 conversion error"),
       Error::IoError(ref e) => write!(f, "IO error: {}", e),
       Error::Error(ref e) => write!(f, "{}", e),
+      Error::ExtensionFailed(ref ext, rc) => {
+        write!(f, "Extension {} failed", ext)?;
+        if let Some(rc) = rc {
+          write!(f, " with exit code {}", rc)?;
+        }
+        Ok(())
+      }
     }
   }
 }

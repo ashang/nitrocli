@@ -105,10 +105,28 @@ impl Command {
         // TODO: Should not scan extensions twice.
         let extensions = available_extensions()?;
         match extensions.get(extension) {
-          Some(path) => process::Command::new(path)
-            .spawn()
-            .map(|_| ())
-            .map_err(Into::<Error>::into),
+          Some(path) => {
+            let mut cmd = process::Command::new(path);
+
+            if let Some(model) = ctx.model {
+              let _ = cmd.args(&["--model", model.as_ref()]);
+            };
+
+            let out = cmd
+              // TODO: We may want to take this path from the command
+              //       execution context.
+              .args(&["--nitrocli", &env::current_exe()?.to_string_lossy()])
+              .args(&args[1..])
+              .output()
+              .map_err(Into::<Error>::into)?;
+            ctx.stdout.write_all(&out.stdout)?;
+            ctx.stderr.write_all(&out.stderr)?;
+            if out.status.success() {
+              Ok(())
+            } else {
+              Err(Error::ExtensionFailed(extension.to_string(), out.status.code()))
+            }
+          }
           None => Err(Error::Error(format!("Unknown command: {}", extension))),
         }
       }
