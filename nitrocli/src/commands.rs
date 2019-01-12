@@ -257,9 +257,13 @@ where
 /// Query and pretty print the status that is common to all Nitrokey devices.
 fn print_status(
   ctx: &mut args::ExecCtx<'_>,
-  model: &'static str,
   device: &nitrokey::DeviceWrapper,
 ) -> Result<()> {
+  let model = match device {
+    nitrokey::DeviceWrapper::Pro(_) => "Pro",
+    nitrokey::DeviceWrapper::Storage(_) => "Storage",
+  };
+
   let serial_number = device
     .get_serial_number()
     .map_err(|err| get_error("Could not query the serial number", err))?;
@@ -281,14 +285,33 @@ fn print_status(
   Ok(())
 }
 
-/// Inquire the status of the nitrokey.
-pub fn status(ctx: &mut args::ExecCtx<'_>) -> Result<()> {
-  let device = get_device(ctx)?;
+fn emit_json_status(
+  ctx: &mut args::ExecCtx<'_>,
+  device: &nitrokey::DeviceWrapper,
+) -> Result<()> {
   let model = match device {
-    nitrokey::DeviceWrapper::Pro(_) => "Pro",
-    nitrokey::DeviceWrapper::Storage(_) => "Storage",
+    nitrokey::DeviceWrapper::Pro(_) => "pro",
+    nitrokey::DeviceWrapper::Storage(_) => "storage",
   };
-  print_status(ctx, model, &device)
+  let serial = device.get_serial_number()?;
+
+  let data = json::object!{
+    "model" => model,
+    "serial" => serial,
+  };
+  ctx.stdout.write_all(data.dump().as_bytes())?;
+  Ok(())
+}
+
+/// Inquire the status of the nitrokey.
+pub fn status(ctx: &mut args::ExecCtx<'_>, json: bool) -> Result<()> {
+  let device = get_device(ctx)?;
+
+  if json {
+    emit_json_status(ctx, &device)
+  } else {
+    print_status(ctx, &device)
+  }
 }
 
 /// Open the encrypted volume on the nitrokey.
