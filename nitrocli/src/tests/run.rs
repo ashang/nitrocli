@@ -45,3 +45,15 @@ fn help_option() {
   test("--help");
   test("-h")
 }
+
+#[test]
+fn version() {
+  let re = regex::Regex::new(r#"^nitrocli \d+\.\d+\.\d+\n$"#).unwrap();
+  let (rc, out, err) = Nitrocli::new().run(&["--version"]);
+
+  assert_eq!(rc, 0);
+  assert_eq!(err, b"");
+
+  let out = String::from_utf8_lossy(&out).into_owned();
+  assert!(re.is_match(&out), out);
+}
