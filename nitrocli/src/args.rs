@@ -829,13 +829,19 @@ pub(crate) fn handle_arguments(ctx: &mut RunCtx<'_>, args: Vec<String>) -> Resul
     fmt_enum!(DeviceModel::all_variants())
   );
   let mut verbosity = 0;
+  let mut version = false;
   let mut command = Command::Status;
   let cmd_help = cmd_help!(command);
   let mut subargs = vec![];
   let mut parser = argparse::ArgumentParser::new();
-  parser.add_option(
+  // Note that ideally we would want to use the argparse::Print action
+  // which was specifically designed with a --version argument in mind.
+  // However, this option does not honor the io::Write object passed to
+  // the ArgumentParser's parse method. To work around this problem, we
+  // implement the same functionality here manually.
+  let _ = parser.refer(&mut version).add_option(
     &["-V", "--version"],
-    argparse::Print(format!("nitrocli {}", env!("CARGO_PKG_VERSION"))),
+    argparse::StoreTrue,
     "Print version information and exit",
   );
   let _ = parser.refer(&mut verbosity).add_option(
@@ -862,16 +868,21 @@ pub(crate) fn handle_arguments(ctx: &mut RunCtx<'_>, args: Vec<String>) -> Resul
 
   subargs.insert(0, format!("nitrocli {}", command));
 
-  let mut ctx = ExecCtx {
-    model,
-    stdout: ctx.stdout,
-    stderr: ctx.stderr,
-    admin_pin: ctx.admin_pin.take(),
-    user_pin: ctx.user_pin.take(),
-    new_admin_pin: ctx.new_admin_pin.take(),
-    new_user_pin: ctx.new_user_pin.take(),
-    password: ctx.password.take(),
-    verbosity,
-  };
-  command.execute(&mut ctx, subargs)
+  if version {
+    ctx.stdout.write_all(concat!("nitrocli ", env!("CARGO_PKG_VERSION")).as_ref())?;
+    Ok(())
+  } else {
+    let mut ctx = ExecCtx {
+      model,
+      stdout: ctx.stdout,
+      stderr: ctx.stderr,
+      admin_pin: ctx.admin_pin.take(),
+      user_pin: ctx.user_pin.take(),
+      new_admin_pin: ctx.new_admin_pin.take(),
+      new_user_pin: ctx.new_user_pin.take(),
+      password: ctx.password.take(),
+      verbosity,
+    };
+    command.execute(&mut ctx, subargs)
+  }
 }
