@@ -38,7 +38,7 @@ const NITROKEY_DEFAULT_ADMIN_PIN: &str = "12345678";
 
 /// Create an `error::Error` with an error message of the format `msg: err`.
 fn get_error(msg: &'static str, err: nitrokey::Error) -> Error {
-  Error::CommandError(Some(msg), err)
+  Error::NitrokeyError(Some(msg), err)
 }
 
 /// Set `libnitrokey`'s log level based on the execution context's verbosity.

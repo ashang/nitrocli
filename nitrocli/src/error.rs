@@ -25,8 +25,8 @@ use std::string;
 #[derive(Debug)]
 pub enum Error {
   ArgparseError(i32),
-  CommandError(Option<&'static str>, nitrokey::Error),
   IoError(io::Error),
+  NitrokeyError(Option<&'static str>, nitrokey::Error),
   Utf8Error(str::Utf8Error),
   Error(String),
 }
@@ -39,7 +39,7 @@ impl From<&str> for Error {
 
 impl From<nitrokey::Error> for Error {
   fn from(e: nitrokey::Error) -> Error {
-    Error::CommandError(None, e)
+    Error::NitrokeyError(None, e)
   }
 }
 
@@ -65,7 +65,7 @@ impl fmt::Display for Error {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match *self {
       Error::ArgparseError(_) => write!(f, "Could not parse arguments"),
-      Error::CommandError(ref ctx, ref e) => {
+      Error::NitrokeyError(ref ctx, ref e) => {
         if let Some(ctx) = ctx {
           write!(f, "{}: ", ctx)?;
         }
