@@ -37,7 +37,7 @@ use crate::Result;
 const NITROKEY_DEFAULT_ADMIN_PIN: &str = "12345678";
 
 /// Create an `error::Error` with an error message of the format `msg: err`.
-fn get_error(msg: &'static str, err: nitrokey::CommandError) -> Error {
+fn get_error(msg: &'static str, err: nitrokey::Error) -> Error {
   Error::CommandError(Some(msg), err)
 }
 
@@ -114,7 +114,7 @@ fn authenticate<D, A, F>(
 ) -> Result<A>
 where
   D: Device,
-  F: Fn(D, &str) -> result::Result<A, (D, nitrokey::CommandError)>,
+  F: Fn(D, &str) -> result::Result<A, (D, nitrokey::Error)>,
 {
   let pin_entry = pinentry::PinEntry::from(pin_type, &device)?;
 
@@ -183,7 +183,7 @@ fn try_with_pin_and_data_with_pinentry<D, F, R>(
   op: F,
 ) -> Result<R>
 where
-  F: Fn(D, &str) -> result::Result<R, (D, nitrokey::CommandError)>,
+  F: Fn(D, &str) -> result::Result<R, (D, nitrokey::Error)>,
 {
   let mut data = data;
   let mut retry = 3;
@@ -193,7 +193,7 @@ where
     match op(data, &pin) {
       Ok(result) => return Ok(result),
       Err((new_data, err)) => match err {
-        nitrokey::CommandError::WrongPassword => {
+        nitrokey::Error::CommandError(nitrokey::CommandError::WrongPassword) => {
           pinentry::clear(pin_entry)?;
           retry -= 1;
 
@@ -219,7 +219,7 @@ fn try_with_pin_and_data<D, F, R>(
   op: F,
 ) -> Result<R>
 where
-  F: Fn(D, &str) -> result::Result<R, (D, nitrokey::CommandError)>,
+  F: Fn(D, &str) -> result::Result<R, (D, nitrokey::Error)>,
 {
   let pin = match pin_entry.pin_type() {
     pinentry::PinType::Admin => &ctx.admin_pin,
@@ -250,7 +250,7 @@ fn try_with_pin<F>(
   op: F,
 ) -> Result<()>
 where
-  F: Fn(&str) -> result::Result<(), nitrokey::CommandError>,
+  F: Fn(&str) -> result::Result<(), nitrokey::Error>,
 {
   try_with_pin_and_data(ctx, pin_entry, msg, (), |data, pin| {
     op(pin).map_err(|err| (data, err))
@@ -639,8 +639,8 @@ fn print_otp_status(
     };
     let name = match result {
       Ok(name) => name,
-      Err(nitrokey::CommandError::InvalidSlot) => return Ok(()),
-      Err(nitrokey::CommandError::SlotNotProgrammed) => {
+      Err(nitrokey::Error::LibraryError(nitrokey::LibraryError::InvalidSlot)) => return Ok(()),
+      Err(nitrokey::Error::CommandError(nitrokey::CommandError::SlotNotProgrammed)) => {
         if all {
           "[not programmed]".to_string()
         } else {
@@ -745,7 +745,7 @@ pub fn pin_unblock(ctx: &mut args::ExecCtx<'_>) -> Result<()> {
 fn print_pws_data(
   ctx: &mut args::ExecCtx<'_>,
   description: &'static str,
-  result: result::Result<String, nitrokey::CommandError>,
+  result: result::Result<String, nitrokey::Error>,
   quiet: bool,
 ) -> Result<()> {
   let value = result.map_err(|err| get_error("Could not access PWS slot", err))?;
@@ -759,7 +759,7 @@ fn print_pws_data(
 
 fn check_slot(pws: &nitrokey::PasswordSafe<'_>, slot: u8) -> Result<()> {
   if slot >= nitrokey::SLOT_COUNT {
-    return Err(nitrokey::CommandError::InvalidSlot.into());
+    return Err(nitrokey::Error::from(nitrokey::LibraryError::InvalidSlot).into());
   }
   let status = pws
     .get_slot_status()
@@ -769,7 +769,7 @@ fn check_slot(pws: &nitrokey::PasswordSafe<'_>, slot: u8) -> Result<()> {
   } else {
     Err(get_error(
       "Could not access PWS slot",
-      nitrokey::CommandError::SlotNotProgrammed,
+      nitrokey::CommandError::SlotNotProgrammed.into(),
     ))
   }
 }

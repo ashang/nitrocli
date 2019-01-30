@@ -25,7 +25,7 @@ use std::string;
 #[derive(Debug)]
 pub enum Error {
   ArgparseError(i32),
-  CommandError(Option<&'static str>, nitrokey::CommandError),
+  CommandError(Option<&'static str>, nitrokey::Error),
   IoError(io::Error),
   Utf8Error(str::Utf8Error),
   Error(String),
@@ -37,8 +37,8 @@ impl From<&str> for Error {
   }
 }
 
-impl From<nitrokey::CommandError> for Error {
-  fn from(e: nitrokey::CommandError) -> Error {
+impl From<nitrokey::Error> for Error {
+  fn from(e: nitrokey::Error) -> Error {
     Error::CommandError(None, e)
   }
 }
