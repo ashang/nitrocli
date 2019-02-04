@@ -1,7 +1,7 @@
 // Copyright (C) 2018-2019 Robin Krahl <robin.krahl@ireas.org>
 // SPDX-License-Identifier: MIT
 
-use std::ops::Deref;
+use std::ops;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 
@@ -42,16 +42,10 @@ pub trait Authenticate {
     /// fn perform_other_task(device: &DeviceWrapper) {}
     ///
     /// # fn try_main() -> Result<(), Error> {
-    /// let device = nitrokey::connect()?;
-    /// let device = match device.authenticate_user("123456") {
-    ///     Ok(user) => {
-    ///         perform_user_task(&user);
-    ///         user.device()
-    ///     },
-    ///     Err((device, err)) => {
-    ///         println!("Could not authenticate as user: {}", err);
-    ///         device
-    ///     },
+    /// let mut device = nitrokey::connect()?;
+    /// match device.authenticate_user("123456") {
+    ///     Ok(user) => perform_user_task(&user),
+    ///     Err(err) => eprintln!("Could not authenticate as user: {}", err),
     /// };
     /// perform_other_task(&device);
     /// #     Ok(())
@@ -61,9 +55,9 @@ pub trait Authenticate {
     /// [`InvalidString`]: enum.LibraryError.html#variant.InvalidString
     /// [`RngError`]: enum.CommandError.html#variant.RngError
     /// [`WrongPassword`]: enum.CommandError.html#variant.WrongPassword
-    fn authenticate_user(self, password: &str) -> Result<User<Self>, (Self, Error)>
+    fn authenticate_user(&mut self, password: &str) -> Result<User<'_, Self>, Error>
     where
-        Self: Device + Sized;
+        Self: Device + std::marker::Sized;
 
     /// Performs admin authentication.  This method consumes the device.  If successful, an
     /// authenticated device is returned.  Otherwise, the current unauthenticated device and the
@@ -88,16 +82,10 @@ pub trait Authenticate {
     /// fn perform_other_task(device: &DeviceWrapper) {}
     ///
     /// # fn try_main() -> Result<(), Error> {
-    /// let device = nitrokey::connect()?;
-    /// let device = match device.authenticate_admin("123456") {
-    ///     Ok(admin) => {
-    ///         perform_admin_task(&admin);
-    ///         admin.device()
-    ///     },
-    ///     Err((device, err)) => {
-    ///         println!("Could not authenticate as admin: {}", err);
-    ///         device
-    ///     },
+    /// let mut device = nitrokey::connect()?;
+    /// match device.authenticate_admin("123456") {
+    ///     Ok(admin) => perform_admin_task(&admin),
+    ///     Err(err) => eprintln!("Could not authenticate as admin: {}", err),
     /// };
     /// perform_other_task(&device);
     /// #     Ok(())
@@ -107,13 +95,13 @@ pub trait Authenticate {
     /// [`InvalidString`]: enum.LibraryError.html#variant.InvalidString
     /// [`RngError`]: enum.CommandError.html#variant.RngError
     /// [`WrongPassword`]: enum.CommandError.html#variant.WrongPassword
-    fn authenticate_admin(self, password: &str) -> Result<Admin<Self>, (Self, Error)>
+    fn authenticate_admin(&mut self, password: &str) -> Result<Admin<'_, Self>, Error>
     where
-        Self: Device + Sized;
+        Self: Device + std::marker::Sized;
 }
 
-trait AuthenticatedDevice<T> {
-    fn new(device: T, temp_password: Vec<u8>) -> Self;
+trait AuthenticatedDevice<'a, T> {
+    fn new(device: &'a mut T, temp_password: Vec<u8>) -> Self;
 
     fn temp_password_ptr(&self) -> *const c_char;
 }
@@ -128,8 +116,8 @@ trait AuthenticatedDevice<T> {
 /// [`authenticate_admin`]: trait.Authenticate.html#method.authenticate_admin
 /// [`device`]: #method.device
 #[derive(Debug)]
-pub struct User<T: Device> {
-    device: T,
+pub struct User<'a, T: Device> {
+    device: &'a mut T,
     temp_password: Vec<u8>,
 }
 
@@ -143,84 +131,43 @@ pub struct User<T: Device> {
 /// [`authenticate_admin`]: trait.Authenticate.html#method.authenticate_admin
 /// [`device`]: #method.device
 #[derive(Debug)]
-pub struct Admin<T: Device> {
-    device: T,
+pub struct Admin<'a, T: Device> {
+    device: &'a mut T,
     temp_password: Vec<u8>,
 }
 
-fn authenticate<D, A, T>(device: D, password: &str, callback: T) -> Result<A, (D, Error)>
+fn authenticate<'a, D, A, T>(device: &'a mut D, password: &str, callback: T) -> Result<A, Error>
 where
     D: Device,
-    A: AuthenticatedDevice<D>,
+    A: AuthenticatedDevice<'a, D>,
     T: Fn(*const c_char, *const c_char) -> c_int,
 {
-    let temp_password = match generate_password(TEMPORARY_PASSWORD_LENGTH) {
-        Ok(temp_password) => temp_password,
-        Err(err) => return Err((device, err)),
-    };
-    let password = match get_cstring(password) {
-        Ok(password) => password,
-        Err(err) => return Err((device, err)),
-    };
+    let temp_password = generate_password(TEMPORARY_PASSWORD_LENGTH)?;
+    let password = get_cstring(password)?;
     let password_ptr = password.as_ptr();
     let temp_password_ptr = temp_password.as_ptr() as *const c_char;
     match callback(password_ptr, temp_password_ptr) {
         0 => Ok(A::new(device, temp_password)),
-        rv => Err((device, Error::from(rv))),
+        rv => Err(Error::from(rv)),
     }
 }
 
-fn authenticate_user_wrapper<T, C>(
-    device: T,
-    constructor: C,
-    password: &str,
-) -> Result<User<DeviceWrapper>, (DeviceWrapper, Error)>
-where
-    T: Device,
-    C: Fn(T) -> DeviceWrapper,
-{
-    let result = device.authenticate_user(password);
-    match result {
-        Ok(user) => Ok(User::new(constructor(user.device), user.temp_password)),
-        Err((device, err)) => Err((constructor(device), err)),
-    }
-}
+impl<'a, T: Device> ops::Deref for User<'a, T> {
+    type Target = T;
 
-fn authenticate_admin_wrapper<T, C>(
-    device: T,
-    constructor: C,
-    password: &str,
-) -> Result<Admin<DeviceWrapper>, (DeviceWrapper, Error)>
-where
-    T: Device,
-    C: Fn(T) -> DeviceWrapper,
-{
-    let result = device.authenticate_admin(password);
-    match result {
-        Ok(user) => Ok(Admin::new(constructor(user.device), user.temp_password)),
-        Err((device, err)) => Err((constructor(device), err)),
-    }
-}
-
-impl<T: Device> User<T> {
-    /// Forgets the user authentication and returns an unauthenticated device.  This method
-    /// consumes the authenticated device.  It does not perform any actual commands on the
-    /// Nitrokey.
-    pub fn device(self) -> T {
+    fn deref(&self) -> &Self::Target {
         self.device
     }
 }
 
-impl<T: Device> Deref for User<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.device
+impl<'a, T: Device> ops::DerefMut for User<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.device
     }
 }
 
-impl<T: Device> GenerateOtp for User<T> {
-    fn get_hotp_code(&self, slot: u8) -> Result<String, Error> {
+impl<'a, T: Device> GenerateOtp for User<'a, T> {
+    fn get_hotp_code(&mut self, slot: u8) -> Result<String, Error> {
         result_from_string(unsafe {
             nitrokey_sys::NK_get_hotp_code_PIN(slot, self.temp_password_ptr())
         })
@@ -233,8 +180,8 @@ impl<T: Device> GenerateOtp for User<T> {
     }
 }
 
-impl<T: Device> AuthenticatedDevice<T> for User<T> {
-    fn new(device: T, temp_password: Vec<u8>) -> Self {
+impl<'a, T: Device> AuthenticatedDevice<'a, T> for User<'a, T> {
+    fn new(device: &'a mut T, temp_password: Vec<u8>) -> Self {
         User {
             device,
             temp_password,
@@ -246,22 +193,21 @@ impl<T: Device> AuthenticatedDevice<T> for User<T> {
     }
 }
 
-impl<T: Device> Deref for Admin<T> {
+impl<'a, T: Device> ops::Deref for Admin<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.device
+        self.device
     }
 }
 
-impl<T: Device> Admin<T> {
-    /// Forgets the user authentication and returns an unauthenticated device.  This method
-    /// consumes the authenticated device.  It does not perform any actual commands on the
-    /// Nitrokey.
-    pub fn device(self) -> T {
+impl<'a, T: Device> ops::DerefMut for Admin<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
         self.device
     }
+}
 
+impl<'a, T: Device> Admin<'a, T> {
     /// Writes the given configuration to the Nitrokey device.
     ///
     /// # Errors
@@ -275,21 +221,18 @@ impl<T: Device> Admin<T> {
     /// # use nitrokey::Error;
     ///
     /// # fn try_main() -> Result<(), Error> {
-    /// let device = nitrokey::connect()?;
+    /// let mut device = nitrokey::connect()?;
     /// let config = Config::new(None, None, None, false);
     /// match device.authenticate_admin("12345678") {
-    ///     Ok(admin) => {
-    ///         admin.write_config(config);
-    ///         ()
-    ///     },
-    ///     Err((_, err)) => println!("Could not authenticate as admin: {}", err),
+    ///     Ok(mut admin) => admin.write_config(config)?,
+    ///     Err(err) => eprintln!("Could not authenticate as admin: {}", err),
     /// };
     /// #     Ok(())
     /// # }
     /// ```
     ///
     /// [`InvalidSlot`]: enum.LibraryError.html#variant.InvalidSlot
-    pub fn write_config(&self, config: Config) -> Result<(), Error> {
+    pub fn write_config(&mut self, config: Config) -> Result<(), Error> {
         let raw_config = RawConfig::try_from(config)?;
         get_command_result(unsafe {
             nitrokey_sys::NK_write_config(
@@ -304,8 +247,8 @@ impl<T: Device> Admin<T> {
     }
 }
 
-impl<T: Device> ConfigureOtp for Admin<T> {
-    fn write_hotp_slot(&self, data: OtpSlotData, counter: u64) -> Result<(), Error> {
+impl<'a, T: Device> ConfigureOtp for Admin<'a, T> {
+    fn write_hotp_slot(&mut self, data: OtpSlotData, counter: u64) -> Result<(), Error> {
         let raw_data = RawOtpSlotData::new(data)?;
         get_command_result(unsafe {
             nitrokey_sys::NK_write_hotp_slot(
@@ -322,7 +265,7 @@ impl<T: Device> ConfigureOtp for Admin<T> {
         })
     }
 
-    fn write_totp_slot(&self, data: OtpSlotData, time_window: u16) -> Result<(), Error> {
+    fn write_totp_slot(&mut self, data: OtpSlotData, time_window: u16) -> Result<(), Error> {
         let raw_data = RawOtpSlotData::new(data)?;
         get_command_result(unsafe {
             nitrokey_sys::NK_write_totp_slot(
@@ -339,21 +282,21 @@ impl<T: Device> ConfigureOtp for Admin<T> {
         })
     }
 
-    fn erase_hotp_slot(&self, slot: u8) -> Result<(), Error> {
+    fn erase_hotp_slot(&mut self, slot: u8) -> Result<(), Error> {
         get_command_result(unsafe {
             nitrokey_sys::NK_erase_hotp_slot(slot, self.temp_password_ptr())
         })
     }
 
-    fn erase_totp_slot(&self, slot: u8) -> Result<(), Error> {
+    fn erase_totp_slot(&mut self, slot: u8) -> Result<(), Error> {
         get_command_result(unsafe {
             nitrokey_sys::NK_erase_totp_slot(slot, self.temp_password_ptr())
         })
     }
 }
 
-impl<T: Device> AuthenticatedDevice<T> for Admin<T> {
-    fn new(device: T, temp_password: Vec<u8>) -> Self {
+impl<'a, T: Device> AuthenticatedDevice<'a, T> for Admin<'a, T> {
+    fn new(device: &'a mut T, temp_password: Vec<u8>) -> Self {
         Admin {
             device,
             temp_password,
@@ -366,35 +309,27 @@ impl<T: Device> AuthenticatedDevice<T> for Admin<T> {
 }
 
 impl Authenticate for DeviceWrapper {
-    fn authenticate_user(self, password: &str) -> Result<User<Self>, (Self, Error)> {
-        match self {
-            DeviceWrapper::Storage(storage) => {
-                authenticate_user_wrapper(storage, DeviceWrapper::Storage, password)
-            }
-            DeviceWrapper::Pro(pro) => authenticate_user_wrapper(pro, DeviceWrapper::Pro, password),
-        }
-    }
-
-    fn authenticate_admin(self, password: &str) -> Result<Admin<Self>, (Self, Error)> {
-        match self {
-            DeviceWrapper::Storage(storage) => {
-                authenticate_admin_wrapper(storage, DeviceWrapper::Storage, password)
-            }
-            DeviceWrapper::Pro(pro) => {
-                authenticate_admin_wrapper(pro, DeviceWrapper::Pro, password)
-            }
-        }
-    }
-}
-
-impl Authenticate for Pro {
-    fn authenticate_user(self, password: &str) -> Result<User<Self>, (Self, Error)> {
+    fn authenticate_user(&mut self, password: &str) -> Result<User<'_, Self>, Error> {
         authenticate(self, password, |password_ptr, temp_password_ptr| unsafe {
             nitrokey_sys::NK_user_authenticate(password_ptr, temp_password_ptr)
         })
     }
 
-    fn authenticate_admin(self, password: &str) -> Result<Admin<Self>, (Self, Error)> {
+    fn authenticate_admin(&mut self, password: &str) -> Result<Admin<'_, Self>, Error> {
+        authenticate(self, password, |password_ptr, temp_password_ptr| unsafe {
+            nitrokey_sys::NK_user_authenticate(password_ptr, temp_password_ptr)
+        })
+    }
+}
+
+impl Authenticate for Pro {
+    fn authenticate_user(&mut self, password: &str) -> Result<User<'_, Self>, Error> {
+        authenticate(self, password, |password_ptr, temp_password_ptr| unsafe {
+            nitrokey_sys::NK_user_authenticate(password_ptr, temp_password_ptr)
+        })
+    }
+
+    fn authenticate_admin(&mut self, password: &str) -> Result<Admin<'_, Self>, Error> {
         authenticate(self, password, |password_ptr, temp_password_ptr| unsafe {
             nitrokey_sys::NK_first_authenticate(password_ptr, temp_password_ptr)
         })
@@ -402,13 +337,13 @@ impl Authenticate for Pro {
 }
 
 impl Authenticate for Storage {
-    fn authenticate_user(self, password: &str) -> Result<User<Self>, (Self, Error)> {
+    fn authenticate_user(&mut self, password: &str) -> Result<User<'_, Self>, Error> {
         authenticate(self, password, |password_ptr, temp_password_ptr| unsafe {
             nitrokey_sys::NK_user_authenticate(password_ptr, temp_password_ptr)
         })
     }
 
-    fn authenticate_admin(self, password: &str) -> Result<Admin<Self>, (Self, Error)> {
+    fn authenticate_admin(&mut self, password: &str) -> Result<Admin<'_, Self>, Error> {
         authenticate(self, password, |password_ptr, temp_password_ptr| unsafe {
             nitrokey_sys::NK_first_authenticate(password_ptr, temp_password_ptr)
         })

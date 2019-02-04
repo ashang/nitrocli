@@ -3,8 +3,7 @@
 
 mod util;
 
-use std::fmt::Debug;
-use std::ops::Deref;
+use std::ops::DerefMut;
 
 use nitrokey::{
     Admin, Authenticate, CommandError, Config, ConfigureOtp, Device, GenerateOtp, LibraryError,
@@ -38,32 +37,29 @@ enum TotpTimestampSize {
     U64,
 }
 
-fn make_admin_test_device<T>(device: T) -> Admin<T>
+fn make_admin_test_device<'a, T>(device: &'a mut T) -> Admin<'a, T>
 where
     T: Device,
-    (T, nitrokey::Error): Debug,
 {
-    device
-        .authenticate_admin(ADMIN_PASSWORD)
-        .expect("Could not login as admin.")
+    unwrap_ok!(device.authenticate_admin(ADMIN_PASSWORD))
 }
 
-fn configure_hotp(admin: &ConfigureOtp, counter: u8) {
+fn configure_hotp(admin: &mut ConfigureOtp, counter: u8) {
     let slot_data = OtpSlotData::new(1, "test-hotp", HOTP_SECRET, OtpMode::SixDigits);
     assert_ok!((), admin.write_hotp_slot(slot_data, counter.into()));
 }
 
-fn check_hotp_codes(device: &GenerateOtp, offset: u8) {
+fn check_hotp_codes(device: &mut GenerateOtp, offset: u8) {
     HOTP_CODES.iter().enumerate().for_each(|(i, code)| {
         if i >= offset as usize {
-            let result = device.get_hotp_code(1);
-            assert_eq!(code, &result.unwrap());
+            assert_ok!(code.to_string(), device.get_hotp_code(1));
         }
     });
 }
 
 #[test_device]
 fn set_time(device: DeviceWrapper) {
+    let mut device = device;
     assert_ok!((), device.set_time(1546385382, true));
     assert_ok!((), device.set_time(1546385392, false));
     assert_cmd_err!(CommandError::Timestamp, device.set_time(1546385292, false));
@@ -72,49 +68,50 @@ fn set_time(device: DeviceWrapper) {
 
 #[test_device]
 fn hotp_no_pin(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, false);
     assert_ok!((), admin.write_config(config));
 
-    configure_hotp(&admin, 0);
-    check_hotp_codes(admin.deref(), 0);
+    configure_hotp(&mut admin, 0);
+    check_hotp_codes(admin.deref_mut(), 0);
 
-    configure_hotp(&admin, 5);
-    check_hotp_codes(admin.deref(), 5);
+    configure_hotp(&mut admin, 5);
+    check_hotp_codes(admin.deref_mut(), 5);
 
-    configure_hotp(&admin, 0);
-    check_hotp_codes(&admin.device(), 0);
+    configure_hotp(&mut admin, 0);
+    check_hotp_codes(&mut device, 0);
 }
 
 #[test_device]
 fn hotp_pin(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, true);
     assert_ok!((), admin.write_config(config));
 
-    configure_hotp(&admin, 0);
-    let user = admin.device().authenticate_user(USER_PASSWORD).unwrap();
-    check_hotp_codes(&user, 0);
+    configure_hotp(&mut admin, 0);
+    let mut user = unwrap_ok!(device.authenticate_user(USER_PASSWORD));
+    check_hotp_codes(&mut user, 0);
 
-    assert_cmd_err!(CommandError::NotAuthorized, user.device().get_hotp_code(1));
+    assert_cmd_err!(CommandError::NotAuthorized, user.get_hotp_code(1));
 }
 
 #[test_device]
 fn hotp_slot_name(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let slot_data = OtpSlotData::new(1, "test-hotp", HOTP_SECRET, OtpMode::SixDigits);
     assert_ok!((), admin.write_hotp_slot(slot_data, 0));
 
-    let device = admin.device();
-    let result = device.get_hotp_slot_name(1);
-    assert_eq!("test-hotp", result.unwrap());
-    let result = device.get_hotp_slot_name(4);
-    assert_lib_err!(LibraryError::InvalidSlot, result);
+    assert_ok!("test-hotp".to_string(), device.get_hotp_slot_name(1));
+    assert_lib_err!(LibraryError::InvalidSlot, device.get_hotp_slot_name(4));
 }
 
 #[test_device]
 fn hotp_error(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let slot_data = OtpSlotData::new(1, "", HOTP_SECRET, OtpMode::SixDigits);
     assert_cmd_err!(CommandError::NoName, admin.write_hotp_slot(slot_data, 0));
     let slot_data = OtpSlotData::new(4, "test", HOTP_SECRET, OtpMode::SixDigits);
@@ -133,7 +130,8 @@ fn hotp_error(device: DeviceWrapper) {
 
 #[test_device]
 fn hotp_erase(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, false);
     assert_ok!((), admin.write_config(config));
     let slot_data = OtpSlotData::new(1, "test1", HOTP_SECRET, OtpMode::SixDigits);
@@ -143,22 +141,21 @@ fn hotp_erase(device: DeviceWrapper) {
 
     assert_ok!((), admin.erase_hotp_slot(1));
 
-    let device = admin.device();
     let result = device.get_hotp_slot_name(1);
     assert_cmd_err!(CommandError::SlotNotProgrammed, result);
     let result = device.get_hotp_code(1);
     assert_cmd_err!(CommandError::SlotNotProgrammed, result);
 
-    assert_eq!("test2", device.get_hotp_slot_name(2).unwrap());
+    assert_ok!("test2".to_string(), device.get_hotp_slot_name(2));
 }
 
-fn configure_totp(admin: &ConfigureOtp, factor: u64) {
+fn configure_totp(admin: &mut ConfigureOtp, factor: u64) {
     let slot_data = OtpSlotData::new(1, "test-totp", TOTP_SECRET, OtpMode::EightDigits);
     let time_window = 30u64.checked_mul(factor).unwrap();
     assert_ok!((), admin.write_totp_slot(slot_data, time_window as u16));
 }
 
-fn check_totp_codes(device: &GenerateOtp, factor: u64, timestamp_size: TotpTimestampSize) {
+fn check_totp_codes(device: &mut GenerateOtp, factor: u64, timestamp_size: TotpTimestampSize) {
     for (base_time, codes) in TOTP_CODES {
         let time = base_time.checked_mul(factor).unwrap();
         let is_u64 = time > u32::max_value() as u64;
@@ -167,7 +164,7 @@ fn check_totp_codes(device: &GenerateOtp, factor: u64, timestamp_size: TotpTimes
         }
 
         assert_ok!((), device.set_time(time, true));
-        let code = device.get_totp_code(1).unwrap();
+        let code = unwrap_ok!(device.get_totp_code(1));
         assert!(
             code.contains(&code),
             "Generated TOTP code {} for {}, but expected one of {}",
@@ -180,74 +177,76 @@ fn check_totp_codes(device: &GenerateOtp, factor: u64, timestamp_size: TotpTimes
 
 #[test_device]
 fn totp_no_pin(device: DeviceWrapper) {
-    // TODO: this test may fail due to bad timing --> find solution
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, false);
     assert_ok!((), admin.write_config(config));
 
-    configure_totp(&admin, 1);
-    check_totp_codes(admin.deref(), 1, TotpTimestampSize::U32);
+    configure_totp(&mut admin, 1);
+    check_totp_codes(admin.deref_mut(), 1, TotpTimestampSize::U32);
 
-    configure_totp(&admin, 2);
-    check_totp_codes(admin.deref(), 2, TotpTimestampSize::U32);
+    configure_totp(&mut admin, 2);
+    check_totp_codes(admin.deref_mut(), 2, TotpTimestampSize::U32);
 
-    configure_totp(&admin, 1);
-    check_totp_codes(&admin.device(), 1, TotpTimestampSize::U32);
+    configure_totp(&mut admin, 1);
+    check_totp_codes(&mut device, 1, TotpTimestampSize::U32);
 }
 
 #[test_device]
 // Nitrokey Storage does only support timestamps that fit in a 32-bit
 // unsigned integer, so don't test with it.
 fn totp_no_pin_64(device: Pro) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, false);
     assert_ok!((), admin.write_config(config));
 
-    configure_totp(&admin, 1);
-    check_totp_codes(admin.deref(), 1, TotpTimestampSize::U64);
+    configure_totp(&mut admin, 1);
+    check_totp_codes(admin.deref_mut(), 1, TotpTimestampSize::U64);
 
-    configure_totp(&admin, 2);
-    check_totp_codes(admin.deref(), 2, TotpTimestampSize::U64);
+    configure_totp(&mut admin, 2);
+    check_totp_codes(admin.deref_mut(), 2, TotpTimestampSize::U64);
 
-    configure_totp(&admin, 1);
-    check_totp_codes(&admin.device(), 1, TotpTimestampSize::U64);
+    configure_totp(&mut admin, 1);
+    check_totp_codes(&mut device, 1, TotpTimestampSize::U64);
 }
 
 #[test_device]
 fn totp_pin(device: DeviceWrapper) {
-    // TODO: this test may fail due to bad timing --> find solution
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, true);
     assert_ok!((), admin.write_config(config));
 
-    configure_totp(&admin, 1);
-    let user = admin.device().authenticate_user(USER_PASSWORD).unwrap();
-    check_totp_codes(&user, 1, TotpTimestampSize::U32);
+    configure_totp(&mut admin, 1);
+    let mut user = unwrap_ok!(device.authenticate_user(USER_PASSWORD));
+    check_totp_codes(&mut user, 1, TotpTimestampSize::U32);
 
-    assert_cmd_err!(CommandError::NotAuthorized, user.device().get_totp_code(1));
+    assert_cmd_err!(CommandError::NotAuthorized, user.get_totp_code(1));
 }
 
 #[test_device]
 // See comment for totp_no_pin_64.
 fn totp_pin_64(device: Pro) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, true);
     assert_ok!((), admin.write_config(config));
 
-    configure_totp(&admin, 1);
-    let user = admin.device().authenticate_user(USER_PASSWORD).unwrap();
-    check_totp_codes(&user, 1, TotpTimestampSize::U64);
+    configure_totp(&mut admin, 1);
+    let mut user = unwrap_ok!(admin.authenticate_user(USER_PASSWORD));
+    check_totp_codes(&mut user, 1, TotpTimestampSize::U64);
 
-    assert_cmd_err!(CommandError::NotAuthorized, user.device().get_totp_code(1));
+    assert_cmd_err!(CommandError::NotAuthorized, device.get_totp_code(1));
 }
 
 #[test_device]
 fn totp_slot_name(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let slot_data = OtpSlotData::new(1, "test-totp", TOTP_SECRET, OtpMode::EightDigits);
     assert_ok!((), admin.write_totp_slot(slot_data, 0));
 
-    let device = admin.device();
     let result = device.get_totp_slot_name(1);
     assert_ok!("test-totp", result);
     let result = device.get_totp_slot_name(16);
@@ -256,7 +255,8 @@ fn totp_slot_name(device: DeviceWrapper) {
 
 #[test_device]
 fn totp_error(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let slot_data = OtpSlotData::new(1, "", TOTP_SECRET, OtpMode::SixDigits);
     assert_cmd_err!(CommandError::NoName, admin.write_totp_slot(slot_data, 0));
     let slot_data = OtpSlotData::new(20, "test", TOTP_SECRET, OtpMode::SixDigits);
@@ -275,7 +275,8 @@ fn totp_error(device: DeviceWrapper) {
 
 #[test_device]
 fn totp_erase(device: DeviceWrapper) {
-    let admin = make_admin_test_device(device);
+    let mut device = device;
+    let mut admin = make_admin_test_device(&mut device);
     let config = Config::new(None, None, None, false);
     assert_ok!((), admin.write_config(config));
     let slot_data = OtpSlotData::new(1, "test1", TOTP_SECRET, OtpMode::SixDigits);
@@ -285,11 +286,10 @@ fn totp_erase(device: DeviceWrapper) {
 
     assert_ok!((), admin.erase_totp_slot(1));
 
-    let device = admin.device();
     let result = device.get_totp_slot_name(1);
     assert_cmd_err!(CommandError::SlotNotProgrammed, result);
     let result = device.get_totp_code(1);
     assert_cmd_err!(CommandError::SlotNotProgrammed, result);
 
-    assert_eq!("test2", device.get_totp_slot_name(2).unwrap());
+    assert_ok!("test2".to_string(), device.get_totp_slot_name(2));
 }

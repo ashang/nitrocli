@@ -33,33 +33,35 @@ fn get_slot_name_direct(slot: u8) -> Result<String, Error> {
     }
 }
 
-fn get_pws<T>(device: &T) -> PasswordSafe
+fn get_pws<T>(device: &mut T) -> PasswordSafe
 where
     T: Device,
 {
-    device.get_password_safe(USER_PASSWORD).unwrap()
+    unwrap_ok!(device.get_password_safe(USER_PASSWORD))
 }
 
 #[test_device]
 fn enable(device: DeviceWrapper) {
+    let mut device = device;
     assert_cmd_err!(
         CommandError::WrongPassword,
         device.get_password_safe(&(USER_PASSWORD.to_owned() + "123"))
     );
-    assert!(device.get_password_safe(USER_PASSWORD).is_ok());
+    assert_any_ok!(device.get_password_safe(USER_PASSWORD));
     assert_cmd_err!(
         CommandError::WrongPassword,
         device.get_password_safe(ADMIN_PASSWORD)
     );
-    assert!(device.get_password_safe(USER_PASSWORD).is_ok());
+    assert_any_ok!(device.get_password_safe(USER_PASSWORD));
 }
 
 #[test_device]
 fn drop(device: DeviceWrapper) {
+    let mut device = device;
     {
-        let pws = get_pws(&device);
+        let mut pws = get_pws(&mut device);
         assert_ok!((), pws.write_slot(1, "name", "login", "password"));
-        assert_eq!("name", pws.get_slot_name(1).unwrap());
+        assert_ok!("name".to_string(), pws.get_slot_name(1));
         let result = get_slot_name_direct(1);
         assert_ok!(String::from("name"), result);
     }
@@ -72,15 +74,16 @@ fn drop(device: DeviceWrapper) {
 
 #[test_device]
 fn get_status(device: DeviceWrapper) {
-    let pws = get_pws(&device);
+    let mut device = device;
+    let mut pws = get_pws(&mut device);
     for i in 0..SLOT_COUNT {
         assert_ok!((), pws.erase_slot(i));
     }
-    let status = pws.get_slot_status().unwrap();
+    let status = unwrap_ok!(pws.get_slot_status());
     assert_eq!(status, [false; SLOT_COUNT as usize]);
 
     assert_ok!((), pws.write_slot(1, "name", "login", "password"));
-    let status = pws.get_slot_status().unwrap();
+    let status = unwrap_ok!(pws.get_slot_status());
     for i in 0..SLOT_COUNT {
         assert_eq!(i == 1, status[i as usize]);
     }
@@ -88,17 +91,17 @@ fn get_status(device: DeviceWrapper) {
     for i in 0..SLOT_COUNT {
         assert_ok!((), pws.write_slot(i, "name", "login", "password"));
     }
-    let status = pws.get_slot_status().unwrap();
-    assert_eq!(status, [true; SLOT_COUNT as usize]);
+    assert_ok!([true; SLOT_COUNT as usize], pws.get_slot_status());
 }
 
 #[test_device]
 fn get_data(device: DeviceWrapper) {
-    let pws = get_pws(&device);
+    let mut device = device;
+    let mut pws = get_pws(&mut device);
     assert_ok!((), pws.write_slot(1, "name", "login", "password"));
-    assert_eq!("name", pws.get_slot_name(1).unwrap());
-    assert_eq!("login", pws.get_slot_login(1).unwrap());
-    assert_eq!("password", pws.get_slot_password(1).unwrap());
+    assert_ok!("name".to_string(), pws.get_slot_name(1));
+    assert_ok!("login".to_string(), pws.get_slot_login(1));
+    assert_ok!("password".to_string(), pws.get_slot_password(1));
 
     assert_ok!((), pws.erase_slot(1));
     assert_cmd_err!(CommandError::SlotNotProgrammed, pws.get_slot_name(1));
@@ -109,9 +112,9 @@ fn get_data(device: DeviceWrapper) {
     let login = "pär@test.com";
     let password = "'i3lJc[09?I:,[u7dWz9";
     assert_ok!((), pws.write_slot(1, name, login, password));
-    assert_eq!(name, pws.get_slot_name(1).unwrap());
-    assert_eq!(login, pws.get_slot_login(1).unwrap());
-    assert_eq!(password, pws.get_slot_password(1).unwrap());
+    assert_ok!(name.to_string(), pws.get_slot_name(1));
+    assert_ok!(login.to_string(), pws.get_slot_login(1));
+    assert_ok!(password.to_string(), pws.get_slot_password(1));
 
     assert_lib_err!(LibraryError::InvalidSlot, pws.get_slot_name(SLOT_COUNT));
     assert_lib_err!(LibraryError::InvalidSlot, pws.get_slot_login(SLOT_COUNT));
@@ -120,7 +123,8 @@ fn get_data(device: DeviceWrapper) {
 
 #[test_device]
 fn write(device: DeviceWrapper) {
-    let pws = get_pws(&device);
+    let mut device = device;
+    let mut pws = get_pws(&mut device);
 
     assert_lib_err!(
         LibraryError::InvalidSlot,
@@ -145,7 +149,8 @@ fn write(device: DeviceWrapper) {
 
 #[test_device]
 fn erase(device: DeviceWrapper) {
-    let pws = get_pws(&device);
+    let mut device = device;
+    let mut pws = get_pws(&mut device);
     assert_lib_err!(LibraryError::InvalidSlot, pws.erase_slot(SLOT_COUNT));
 
     assert_ok!((), pws.write_slot(0, "name", "login", "password"));

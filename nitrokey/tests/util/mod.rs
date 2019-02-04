@@ -1,12 +1,44 @@
 // Copyright (C) 2018-2019 Robin Krahl <robin.krahl@ireas.org>
 // SPDX-License-Identifier: MIT
 
+#[allow(dead_code)]
 pub static ADMIN_PASSWORD: &str = "12345678";
+#[allow(dead_code)]
 pub static USER_PASSWORD: &str = "123456";
 
 #[macro_export]
+macro_rules! unwrap_ok {
+    ($val:expr) => {
+        match $val {
+            Ok(val) => val,
+            Err(err) => panic!(
+                r#"assertion failed: `(left == right)`
+  left: `Ok(_)`,
+ right: `Err({:?})`"#,
+                err
+            ),
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! assert_any_ok {
+    ($val:expr) => {
+        match &$val {
+            Ok(_) => {}
+            Err(err) => panic!(
+                r#"assertion failed: `(left == right)`
+  left: `Ok(_)`,
+ right: `Err({:?})`"#,
+                err
+            ),
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! assert_ok {
-    ($left:expr, $right:expr) => {{
+    ($left:expr, $right:expr) => {
         match &$right {
             Ok(right) => match &$left {
                 left => {
@@ -27,7 +59,7 @@ macro_rules! assert_ok {
                 $left, right_err
             ),
         }
-    }};
+    };
 }
 
 #[macro_export]

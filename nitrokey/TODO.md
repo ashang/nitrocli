@@ -13,7 +13,6 @@ SPDX-License-Identifier: MIT
 - Clear passwords from memory.
 - Lock password safe in `PasswordSafe::drop()` (see [nitrokey-storage-firmware
   issue 65][]).
-- Disable creation of multiple password safes at the same time.
 - Check timing in Storage tests.
 - Consider restructuring `device::StorageStatus`.
 
