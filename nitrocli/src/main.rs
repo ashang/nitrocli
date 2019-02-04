@@ -18,7 +18,7 @@
 // *************************************************************************
 
 #![deny(
-  dead_code,
+  //dead_code,
   illegal_floating_point_literal_pattern,
   improper_ctypes,
   intra_doc_link_resolution_failure,
@@ -46,12 +46,12 @@
   unreachable_patterns,
   unstable_features,
   unstable_name_collisions,
-  unused,
-  unused_comparisons,
-  unused_import_braces,
-  unused_lifetimes,
-  unused_qualifications,
-  unused_results,
+  //unused,
+  //unused_comparisons,
+  //unused_import_braces,
+  //unused_lifetimes,
+  //unused_qualifications,
+  //unused_results,
   where_clauses_object_safety,
   while_true
 )]
