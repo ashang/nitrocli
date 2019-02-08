@@ -114,7 +114,7 @@ fn authenticate<'dev, D, A, F>(
 ) -> Result<A>
 where
   D: Device,
-  for<'s> F: FnMut(&'dev mut D, &'s str) -> result::Result<A, nitrokey::Error>,
+  for<'s> F: Fn(&'dev mut D, &'s str) -> result::Result<A, nitrokey::Error>,
 {
   let pin_entry = pinentry::PinEntry::from(pin_type, device)?;
 
@@ -186,16 +186,17 @@ fn try_with_pin_and_data_with_pinentry<'dev, D, F, R>(
   pin_entry: &pinentry::PinEntry,
   msg: &'static str,
   data: &'dev mut D,
-  mut op: F,
+  op: F,
 ) -> Result<R>
 where
-  F: FnMut(&'dev mut D, &str) -> result::Result<R, nitrokey::Error>,
+  F: Fn(&'dev mut D, &str) -> result::Result<R, nitrokey::Error>,
 {
+  let mut opt = Some(data);
   let mut retry = 3;
   let mut error_msg = None;
   loop {
     let pin = pinentry::inquire(pin_entry, pinentry::Mode::Query, error_msg)?;
-    match op(data, &pin) {
+    match op(opt.take().unwrap(), &pin) {
       Ok(result) => return Ok(result),
       Err(err) => match err {
         nitrokey::Error::CommandError(nitrokey::CommandError::WrongPassword) => {
@@ -220,10 +221,10 @@ fn try_with_pin_and_data<'dev, D, F, R>(
   pin_entry: &pinentry::PinEntry,
   msg: &'static str,
   data: &'dev mut D,
-  mut op: F,
+  op: F,
 ) -> Result<R>
 where
-  F: FnMut(&'dev mut D, &str) -> result::Result<R, nitrokey::Error>,
+  F: Fn(&'dev mut D, &str) -> result::Result<R, nitrokey::Error>,
 {
   let pin = match pin_entry.pin_type() {
     pinentry::PinType::Admin => &ctx.admin_pin,
@@ -241,24 +242,6 @@ where
   } else {
     try_with_pin_and_data_with_pinentry(pin_entry, msg, data, op)
   }
-}
-
-/// Try to execute the given function with a pin queried using pinentry.
-///
-/// This function behaves exactly as `try_with_pin_and_data`, but
-/// it refrains from passing any data to it.
-fn try_with_pin<F>(
-  ctx: &mut args::ExecCtx<'_>,
-  pin_entry: &pinentry::PinEntry,
-  msg: &'static str,
-  mut op: F,
-) -> Result<()>
-where
-  F: FnMut(&str) -> result::Result<(), nitrokey::Error>,
-{
-  try_with_pin_and_data(ctx, pin_entry, msg, &mut (), |_, pin| {
-    op(pin).map_err(|err| err)
-  })
 }
 
 /// Query and pretty print the status that is common to all Nitrokey devices.
@@ -311,7 +294,7 @@ pub fn reset(ctx: &mut args::ExecCtx<'_>) -> Result<()> {
   // factory reset, we clear the pinentry cache for the admin PIN.
   pinentry::clear(&pin_entry)?;
 
-  try_with_pin(ctx, &pin_entry, "Factory reset failed", |pin| {
+  try_with_pin_and_data(ctx, &pin_entry, "Factory reset failed", &mut device, |device, pin| {
     device.factory_reset(&pin)?;
     // Work around for a timing issue between factory_reset and
     // build_aes_key, see
@@ -334,9 +317,13 @@ pub fn storage_open(ctx: &mut args::ExecCtx<'_>) -> Result<()> {
   // flush caches to disk.
   unsafe { sync() };
 
-  try_with_pin(ctx, &pin_entry, "Opening encrypted volume failed", |pin| {
-    device.enable_encrypted_volume(&pin)
-  })
+  try_with_pin_and_data(
+    ctx,
+    &pin_entry,
+    "Opening encrypted volume failed",
+    &mut device,
+    |device, pin| device.enable_encrypted_volume(&pin)
+  )
 }
 
 /// Close the previously opened encrypted volume.
@@ -732,11 +719,12 @@ pub fn pin_set(ctx: &mut args::ExecCtx<'_>, pin_type: pinentry::PinType) -> Resu
   let pin_entry = pinentry::PinEntry::from(pin_type, &device)?;
   let new_pin = choose_pin(ctx, &pin_entry, true)?;
 
-  try_with_pin(
+  try_with_pin_and_data(
     ctx,
     &pin_entry,
     "Could not change the PIN",
-    |current_pin| match pin_type {
+    &mut device,
+    |device, current_pin| match pin_type {
       pinentry::PinType::Admin => device.change_admin_pin(&current_pin, &new_pin),
       pinentry::PinType::User => device.change_user_pin(&current_pin, &new_pin),
     },
@@ -750,11 +738,12 @@ pub fn pin_unblock(ctx: &mut args::ExecCtx<'_>) -> Result<()> {
   let user_pin = choose_pin(ctx, &pin_entry, false)?;
   let pin_entry = pinentry::PinEntry::from(pinentry::PinType::Admin, &device)?;
 
-  try_with_pin(
+  try_with_pin_and_data(
     ctx,
     &pin_entry,
     "Could not unblock the user PIN",
-    |admin_pin| device.unlock_user_pin(&admin_pin, &user_pin),
+    &mut device,
+    |device, admin_pin| device.unlock_user_pin(&admin_pin, &user_pin),
   )
 }
 
