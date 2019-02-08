@@ -168,6 +168,49 @@ fn get_volume_status(status: &nitrokey::VolumeStatus) -> &'static str {
   }
 }
 
+macro_rules! bail {
+  ( $res:expr, $msg:expr ) => {
+    match $res {
+      Ok(res) => return Ok(res),
+      Err(err) => {
+        if let Error::NitrokeyError(_, err) = err {
+          if let nitrokey::Error::CommandError(nitrokey::CommandError::WrongPassword) = err {
+            ()
+          } else {
+            return Err(get_error($msg, err));
+          }
+        } else {
+          return Err(err)
+        }
+      },
+    }
+  };
+}
+
+fn try_op<'dev, D, F, R>(
+  pin_entry: &pinentry::PinEntry,
+  error_msg: Option<&str>,
+  retry: u8,
+  msg: &'static str,
+  data: &'dev mut D,
+  op: &F,
+) -> Result<R>
+where
+  F: Fn(&'dev mut D, &str) -> result::Result<R, nitrokey::Error>,
+{
+  let pin = pinentry::inquire(pin_entry, pinentry::Mode::Query, error_msg)?;
+  match op(data, &pin) {
+    Ok(result) => return Ok(result),
+    Err(err) => match err {
+      nitrokey::Error::CommandError(nitrokey::CommandError::WrongPassword) => {
+        pinentry::clear(pin_entry)?;
+        return Err(get_error(msg, err));
+      }
+      err => return Err(get_error(msg, err)),
+    },
+  };
+}
+
 /// Try to execute the given function with a pin queried using pinentry.
 ///
 /// This function will query the pin of the given type from the user
@@ -191,28 +234,11 @@ fn try_with_pin_and_data_with_pinentry<'dev, D, F, R>(
 where
   F: Fn(&'dev mut D, &str) -> result::Result<R, nitrokey::Error>,
 {
-  let mut opt = Some(data);
-  let mut retry = 3;
-  let mut error_msg = None;
-  loop {
-    let pin = pinentry::inquire(pin_entry, pinentry::Mode::Query, error_msg)?;
-    match op(opt.take().unwrap(), &pin) {
-      Ok(result) => return Ok(result),
-      Err(err) => match err {
-        nitrokey::Error::CommandError(nitrokey::CommandError::WrongPassword) => {
-          pinentry::clear(pin_entry)?;
-          retry -= 1;
-
-          if retry > 0 {
-            error_msg = Some("Wrong password, please reenter");
-            continue;
-          }
-          return Err(get_error(msg, err));
-        }
-        err => return Err(get_error(msg, err)),
-      },
-    };
-  }
+  let error_msg = Some("Wrong password, please reenter");
+  { bail!(try_op(pin_entry, None, 1, msg, data, &op), msg); };
+  { bail!(try_op(pin_entry, error_msg, 2, msg, data, &op), msg); };
+  //{ bail!(try_op(pin_entry, error_msg, 3, msg, data, &op), msg) };
+  Err(get_error(msg, nitrokey::Error::CommandError(nitrokey::CommandError::WrongPassword)))
 }
 
 /// Try to execute the given function with a PIN.
